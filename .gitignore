@@ -138,7 +138,7 @@ dmypy.json
 *.hhr
 *.zip
 
-*.fa
+# *.fa
 *.fasta
 *.pt
 *.gz

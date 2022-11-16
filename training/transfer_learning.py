@@ -84,7 +84,7 @@ def main(args, tb):
         "num_workers": 4,
     }
 
-    if args.fixed_network_transfer_learning == "True":
+    if args.fixed_network_transfer_learning:
         args.fixed_network_transfer_learning = True
     else:
         args.fixed_network_transfer_learning = False
@@ -536,13 +536,14 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--mixed_precision", type=bool, default=True, help="train with mixed precision"
     )
-    # argparser.add_argument(
-    #     "--num_cross_validation", type=int, default=5, help="Monte Carlo CV counts"
-    # ) # for every epoch
+    argparser.add_argument(
+        "--whole_network_transfer_learning",
+        action="store_true",
+        help="train with fixed network weights",
+    )
     argparser.add_argument(
         "--fixed_network_transfer_learning",
-        type=bool,
-        default=False,
+        action="store_true",
         help="train with fixed network weights",
     )
 
