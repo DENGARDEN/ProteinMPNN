@@ -140,3 +140,8 @@ dmypy.json
 
 *.fa
 *.fasta
+*.pt
+*.gz
+*.ent
+*.csv
+*.bak

@@ -19,24 +19,48 @@ import itertools
 def featurize(batch, device):
     alphabet = "ACDEFGHIKLMNPQRSTVWYX"
     B = len(batch)
-    lengths = np.array(
-        [len(b["seq"]) for b in batch], dtype=np.int32
-    )  # sum of chain seq lengths
+
+    # tricky case... divide legnths into train and validation data => calculate at the final step
+    # lengths = np.array(
+    #     [len(b["seq"]) for b in batch], dtype=np.int32
+    # )
+    # sum of chain seq lengths
+    minibatch_train = []  # Store lengths of each chain in the batch
+    minibatch_valid = []
+
     L_max = max([len(b["seq"]) for b in batch])
-    X = np.zeros([B, L_max, 4, 3])
-    residue_idx = -100 * np.ones(
-        [B, L_max], dtype=np.int32
+
+    # initialize numpy arrays
+    X_train = np.zeros([int(0.9 * B), L_max, 4, 3])
+    X_valid = np.zeros([int(0.1 * B), L_max, 4, 3])
+
+    residue_idx_train = -100 * np.ones(
+        [int(0.9 * B), L_max], dtype=np.int32
     )  # residue idx with jumps across chains
-    chain_M = np.zeros(
-        [B, L_max], dtype=np.int32
+    residue_idx_valid = -100 * np.ones(
+        [int(0.1 * B), L_max], dtype=np.int32
+    )  # residue idx with jumps across chains
+    chain_M_train = np.zeros(
+        [int(0.9 * B), L_max], dtype=np.int32
     )  # 1.0 for the bits that need to be predicted, 0.0 for the bits that are given
-    mask_self = np.ones(
-        [B, L_max, L_max], dtype=np.int32
+    chain_M_valid = np.zeros(
+        [int(0.1 * B), L_max], dtype=np.int32
+    )  # 1.0 for the bits that need to be predicted, 0.0 for the bits that are given
+
+    mask_self_train = np.ones(
+        [int(0.9 * B), L_max, L_max], dtype=np.int32
     )  # for interface loss calculation - 0.0 for self interaction, 1.0 for other
-    chain_encoding_all = np.zeros(
-        [B, L_max], dtype=np.int32
+    mask_self_valid = np.ones(
+        [int(0.1 * B), L_max, L_max], dtype=np.int32
+    )  # for interface loss calculation - 0.0 for self interaction, 1.0 for other
+    chain_encoding_all_train = np.zeros(
+        [int(0.9 * B), L_max], dtype=np.int32
     )  # integer encoding for chains 0, 0, 0,...0, 1, 1,..., 1, 2, 2, 2...
-    S = np.zeros([B, L_max], dtype=np.int32)  # sequence AAs integers
+    chain_encoding_all_valid = np.zeros(
+        [int(0.1 * B), L_max], dtype=np.int32
+    )  # integer encoding for chains 0, 0, 0,...0, 1, 1,..., 1, 2, 2, 2...
+    S_train = np.zeros([int(0.9 * B), L_max], dtype=np.int32)  # sequence AAs integers
+    S_valid = np.zeros([int(0.1 * B), L_max], dtype=np.int32)  # sequence AAs integers
     init_alphabet = [
         "A",
         "B",
@@ -94,128 +118,320 @@ def featurize(batch, device):
     extra_alphabet = [str(item) for item in list(np.arange(300))]
     chain_letters = init_alphabet + extra_alphabet
     for i, b in enumerate(batch):
-        masked_chains = b["masked_list"]
-        visible_chains = b["visible_list"]
-        all_chains = masked_chains + visible_chains
-        visible_temp_dict = {}
-        masked_temp_dict = {}
-        for step, letter in enumerate(all_chains):
-            chain_seq = b[f"seq_chain_{letter}"]
-            if letter in visible_chains:
-                visible_temp_dict[letter] = chain_seq
-            elif letter in masked_chains:
-                masked_temp_dict[letter] = chain_seq
-        for km, vm in masked_temp_dict.items():
-            for kv, vv in visible_temp_dict.items():
-                if vm == vv:
-                    if kv not in masked_chains:
-                        masked_chains.append(kv)
-                    if kv in visible_chains:
-                        visible_chains.remove(kv)
-        all_chains = masked_chains + visible_chains
-        random.shuffle(all_chains)  # randomly shuffle chain order
-        num_chains = b["num_of_chains"]
-        mask_dict = {}
-        x_chain_list = []
-        chain_mask_list = []
-        chain_seq_list = []
-        chain_encoding_list = []
-        c = 1
-        l0 = 0
-        l1 = 0
-        for step, letter in enumerate(all_chains):
-            if letter in visible_chains:
+        if i < int(0.9 * len(batch)):
+            # train on 90% of the data
+            minibatch_train.append(len(b["seq"]))
+
+            masked_chains = b["masked_list"]
+            visible_chains = b["visible_list"]
+            all_chains = masked_chains + visible_chains
+            visible_temp_dict = {}
+            masked_temp_dict = {}
+            for step, letter in enumerate(all_chains):
                 chain_seq = b[f"seq_chain_{letter}"]
-                chain_length = len(chain_seq)
-                chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
-                chain_mask = np.zeros(chain_length)  # 0.0 for visible chains
-                x_chain = np.stack(
-                    [
-                        chain_coords[c]
-                        for c in [
-                            f"N_chain_{letter}",
-                            f"CA_chain_{letter}",
-                            f"C_chain_{letter}",
-                            f"O_chain_{letter}",
-                        ]
-                    ],
-                    1,
-                )  # [chain_length,4,3]
-                x_chain_list.append(x_chain)
-                chain_mask_list.append(chain_mask)
-                chain_seq_list.append(chain_seq)
-                chain_encoding_list.append(c * np.ones(np.array(chain_mask).shape[0]))
-                l1 += chain_length
-                mask_self[i, l0:l1, l0:l1] = np.zeros([chain_length, chain_length])
-                residue_idx[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
-                l0 += chain_length
-                c += 1
-            elif letter in masked_chains:
+                if letter in visible_chains:
+                    visible_temp_dict[letter] = chain_seq
+                elif letter in masked_chains:
+                    masked_temp_dict[letter] = chain_seq
+            for km, vm in masked_temp_dict.items():
+                for kv, vv in visible_temp_dict.items():
+                    if vm == vv:
+                        if kv not in masked_chains:
+                            masked_chains.append(kv)
+                        if kv in visible_chains:
+                            visible_chains.remove(kv)
+            all_chains = masked_chains + visible_chains
+            random.shuffle(all_chains)  # randomly shuffle chain order
+            num_chains = b["num_of_chains"]
+            mask_dict = {}
+            x_chain_list = []
+            chain_mask_list = []
+            chain_seq_list = []
+            chain_encoding_list = []
+            c = 1
+            l0 = 0
+            l1 = 0
+            for step, letter in enumerate(all_chains):
+                if letter in visible_chains:
+                    chain_seq = b[f"seq_chain_{letter}"]
+                    chain_length = len(chain_seq)
+                    chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
+                    chain_mask = np.zeros(chain_length)  # 0.0 for visible chains
+                    x_chain = np.stack(
+                        [
+                            chain_coords[c]
+                            for c in [
+                                f"N_chain_{letter}",
+                                f"CA_chain_{letter}",
+                                f"C_chain_{letter}",
+                                f"O_chain_{letter}",
+                            ]
+                        ],
+                        1,
+                    )  # [chain_length,4,3]
+                    x_chain_list.append(x_chain)
+                    chain_mask_list.append(chain_mask)
+                    chain_seq_list.append(chain_seq)
+                    chain_encoding_list.append(
+                        c * np.ones(np.array(chain_mask).shape[0])
+                    )
+                    l1 += chain_length
+                    mask_self_train[i, l0:l1, l0:l1] = np.zeros(
+                        [chain_length, chain_length]
+                    )
+                    residue_idx_train[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
+                    l0 += chain_length
+                    c += 1
+                elif letter in masked_chains:
+                    chain_seq = b[f"seq_chain_{letter}"]
+                    chain_length = len(chain_seq)
+                    chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
+                    chain_mask = np.ones(chain_length)  # 0.0 for visible chains
+                    x_chain = np.stack(
+                        [
+                            chain_coords[c]
+                            for c in [
+                                f"N_chain_{letter}",
+                                f"CA_chain_{letter}",
+                                f"C_chain_{letter}",
+                                f"O_chain_{letter}",
+                            ]
+                        ],
+                        1,
+                    )  # [chain_lenght,4,3]
+                    x_chain_list.append(x_chain)
+                    chain_mask_list.append(chain_mask)
+                    chain_seq_list.append(chain_seq)
+                    chain_encoding_list.append(
+                        c * np.ones(np.array(chain_mask).shape[0])
+                    )
+                    l1 += chain_length
+                    mask_self_train[i, l0:l1, l0:l1] = np.zeros(
+                        [chain_length, chain_length]
+                    )
+                    residue_idx_train[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
+                    l0 += chain_length
+                    c += 1
+            x = np.concatenate(x_chain_list, 0)  # [L, 4, 3]
+            all_sequence = "".join(chain_seq_list)
+            m = np.concatenate(
+                chain_mask_list, 0
+            )  # [L,], 1.0 for places that need to be predicted
+            chain_encoding = np.concatenate(chain_encoding_list, 0)
+
+            l = len(all_sequence)
+            x_pad = np.pad(
+                x,
+                [[0, L_max - l], [0, 0], [0, 0]],
+                "constant",
+                constant_values=(np.nan,),
+            )
+            X_train[i, :, :, :] = x_pad
+
+            m_pad = np.pad(m, [[0, L_max - l]], "constant", constant_values=(0.0,))
+            chain_M_train[i, :] = m_pad
+
+            chain_encoding_pad = np.pad(
+                chain_encoding, [[0, L_max - l]], "constant", constant_values=(0.0,)
+            )
+            chain_encoding_all_train[i, :] = chain_encoding_pad
+
+            # Convert to labels
+            indices = np.asarray(
+                [alphabet.index(a) for a in all_sequence], dtype=np.int32
+            )
+            S_train[i, :l] = indices
+        else:
+            # valid
+            minibatch_valid.append(len(b["seq"]))
+
+            masked_chains = b["masked_list"]
+            visible_chains = b["visible_list"]
+            all_chains = masked_chains + visible_chains
+            visible_temp_dict = {}
+            masked_temp_dict = {}
+            for step, letter in enumerate(all_chains):
                 chain_seq = b[f"seq_chain_{letter}"]
-                chain_length = len(chain_seq)
-                chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
-                chain_mask = np.ones(chain_length)  # 0.0 for visible chains
-                x_chain = np.stack(
-                    [
-                        chain_coords[c]
-                        for c in [
-                            f"N_chain_{letter}",
-                            f"CA_chain_{letter}",
-                            f"C_chain_{letter}",
-                            f"O_chain_{letter}",
-                        ]
-                    ],
-                    1,
-                )  # [chain_lenght,4,3]
-                x_chain_list.append(x_chain)
-                chain_mask_list.append(chain_mask)
-                chain_seq_list.append(chain_seq)
-                chain_encoding_list.append(c * np.ones(np.array(chain_mask).shape[0]))
-                l1 += chain_length
-                mask_self[i, l0:l1, l0:l1] = np.zeros([chain_length, chain_length])
-                residue_idx[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
-                l0 += chain_length
-                c += 1
-        x = np.concatenate(x_chain_list, 0)  # [L, 4, 3]
-        all_sequence = "".join(chain_seq_list)
-        m = np.concatenate(
-            chain_mask_list, 0
-        )  # [L,], 1.0 for places that need to be predicted
-        chain_encoding = np.concatenate(chain_encoding_list, 0)
+                if letter in visible_chains:
+                    visible_temp_dict[letter] = chain_seq
+                elif letter in masked_chains:
+                    masked_temp_dict[letter] = chain_seq
+            for km, vm in masked_temp_dict.items():
+                for kv, vv in visible_temp_dict.items():
+                    if vm == vv:
+                        if kv not in masked_chains:
+                            masked_chains.append(kv)
+                        if kv in visible_chains:
+                            visible_chains.remove(kv)
+            all_chains = masked_chains + visible_chains
+            random.shuffle(all_chains)  # randomly shuffle chain order
+            num_chains = b["num_of_chains"]
+            mask_dict = {}
+            x_chain_list = []
+            chain_mask_list = []
+            chain_seq_list = []
+            chain_encoding_list = []
+            c = 1
+            l0 = 0
+            l1 = 0
+            for step, letter in enumerate(all_chains):
+                if letter in visible_chains:
+                    chain_seq = b[f"seq_chain_{letter}"]
+                    chain_length = len(chain_seq)
+                    chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
+                    chain_mask = np.zeros(chain_length)  # 0.0 for visible chains
+                    x_chain = np.stack(
+                        [
+                            chain_coords[c]
+                            for c in [
+                                f"N_chain_{letter}",
+                                f"CA_chain_{letter}",
+                                f"C_chain_{letter}",
+                                f"O_chain_{letter}",
+                            ]
+                        ],
+                        1,
+                    )  # [chain_length,4,3]
+                    x_chain_list.append(x_chain)
+                    chain_mask_list.append(chain_mask)
+                    chain_seq_list.append(chain_seq)
+                    chain_encoding_list.append(
+                        c * np.ones(np.array(chain_mask).shape[0])
+                    )
+                    l1 += chain_length
+                    mask_self_valid[i, l0:l1, l0:l1] = np.zeros(
+                        [chain_length, chain_length]
+                    )
+                    residue_idx_valid[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
+                    l0 += chain_length
+                    c += 1
+                elif letter in masked_chains:
+                    chain_seq = b[f"seq_chain_{letter}"]
+                    chain_length = len(chain_seq)
+                    chain_coords = b[f"coords_chain_{letter}"]  # this is a dictionary
+                    chain_mask = np.ones(chain_length)  # 0.0 for visible chains
+                    x_chain = np.stack(
+                        [
+                            chain_coords[c]
+                            for c in [
+                                f"N_chain_{letter}",
+                                f"CA_chain_{letter}",
+                                f"C_chain_{letter}",
+                                f"O_chain_{letter}",
+                            ]
+                        ],
+                        1,
+                    )  # [chain_lenght,4,3]
+                    x_chain_list.append(x_chain)
+                    chain_mask_list.append(chain_mask)
+                    chain_seq_list.append(chain_seq)
+                    chain_encoding_list.append(
+                        c * np.ones(np.array(chain_mask).shape[0])
+                    )
+                    l1 += chain_length
+                    mask_self_valid[i, l0:l1, l0:l1] = np.zeros(
+                        [chain_length, chain_length]
+                    )
+                    residue_idx_valid[i, l0:l1] = 100 * (c - 1) + np.arange(l0, l1)
+                    l0 += chain_length
+                    c += 1
+            x = np.concatenate(x_chain_list, 0)  # [L, 4, 3]
+            all_sequence = "".join(chain_seq_list)
+            m = np.concatenate(
+                chain_mask_list, 0
+            )  # [L,], 1.0 for places that need to be predicted
+            chain_encoding = np.concatenate(chain_encoding_list, 0)
 
-        l = len(all_sequence)
-        x_pad = np.pad(
-            x, [[0, L_max - l], [0, 0], [0, 0]], "constant", constant_values=(np.nan,)
-        )
-        X[i, :, :, :] = x_pad
+            l = len(all_sequence)
+            x_pad = np.pad(
+                x,
+                [[0, L_max - l], [0, 0], [0, 0]],
+                "constant",
+                constant_values=(np.nan,),
+            )
+            X_valid[i, :, :, :] = x_pad
 
-        m_pad = np.pad(m, [[0, L_max - l]], "constant", constant_values=(0.0,))
-        chain_M[i, :] = m_pad
+            m_pad = np.pad(m, [[0, L_max - l]], "constant", constant_values=(0.0,))
+            chain_M_valid[i, :] = m_pad
 
-        chain_encoding_pad = np.pad(
-            chain_encoding, [[0, L_max - l]], "constant", constant_values=(0.0,)
-        )
-        chain_encoding_all[i, :] = chain_encoding_pad
+            chain_encoding_pad = np.pad(
+                chain_encoding, [[0, L_max - l]], "constant", constant_values=(0.0,)
+            )
+            chain_encoding_all_valid[i, :] = chain_encoding_pad
 
-        # Convert to labels
-        indices = np.asarray([alphabet.index(a) for a in all_sequence], dtype=np.int32)
-        S[i, :l] = indices
+            # Convert to labels
+            indices = np.asarray(
+                [alphabet.index(a) for a in all_sequence], dtype=np.int32
+            )
+            S_valid[i, :l] = indices
 
-    isnan = np.isnan(X)
-    mask = np.isfinite(np.sum(X, (2, 3))).astype(np.float32)
-    X[isnan] = 0.0
+    # Last step: convert to torch tensors
+    # train
+    isnan = np.isnan(X_train)
+    mask_train = np.isfinite(np.sum(X_train, (2, 3))).astype(np.float32)
+    X_train[isnan] = 0.0
 
     # Conversion
-    residue_idx = torch.from_numpy(residue_idx).to(dtype=torch.long, device=device)
-    S = torch.from_numpy(S).to(dtype=torch.long, device=device)
-    X = torch.from_numpy(X).to(dtype=torch.float32, device=device)
-    mask = torch.from_numpy(mask).to(dtype=torch.float32, device=device)
-    mask_self = torch.from_numpy(mask_self).to(dtype=torch.float32, device=device)
-    chain_M = torch.from_numpy(chain_M).to(dtype=torch.float32, device=device)
-    chain_encoding_all = torch.from_numpy(chain_encoding_all).to(
+    residue_idx_train = torch.from_numpy(residue_idx_train).to(
         dtype=torch.long, device=device
     )
-    return X, S, mask, lengths, chain_M, residue_idx, mask_self, chain_encoding_all
+    S_train = torch.from_numpy(S_train).to(dtype=torch.long, device=device)
+    X_train = torch.from_numpy(X_train).to(dtype=torch.float32, device=device)
+    mask_train = torch.from_numpy(mask_train).to(dtype=torch.float32, device=device)
+    mask_self_train = torch.from_numpy(mask_self_train).to(
+        dtype=torch.float32, device=device
+    )
+    chain_M_train = torch.from_numpy(chain_M_train).to(
+        dtype=torch.float32, device=device
+    )
+    chain_encoding_all_train = torch.from_numpy(chain_encoding_all_train).to(
+        dtype=torch.long, device=device
+    )
+    lengths_train = np.array(minibatch_train, dtype=np.int32)
+
+    # valid
+    isnan = np.isnan(X_valid)
+    mask_valid = np.isfinite(np.sum(X_valid, (2, 3))).astype(np.float32)
+    X_valid[isnan] = 0.0
+
+    # Conversion
+    residue_idx_valid = torch.from_numpy(residue_idx_valid).to(
+        dtype=torch.long, device=device
+    )
+    S_valid = torch.from_numpy(S_valid).to(dtype=torch.long, device=device)
+    X_valid = torch.from_numpy(X_valid).to(dtype=torch.float32, device=device)
+    mask_valid = torch.from_numpy(mask_valid).to(dtype=torch.float32, device=device)
+    mask_self_valid = torch.from_numpy(mask_self_valid).to(
+        dtype=torch.float32, device=device
+    )
+    chain_M_valid = torch.from_numpy(chain_M_valid).to(
+        dtype=torch.float32, device=device
+    )
+    chain_encoding_all_valid = torch.from_numpy(chain_encoding_all_valid).to(
+        dtype=torch.long, device=device
+    )
+    lengths_valid = np.array(minibatch_valid, dtype=np.int32)
+
+    # Reverse engineering
+    return (
+        X_train,
+        S_train,
+        mask_train,
+        lengths_train,
+        chain_M_train,
+        residue_idx_train,
+        mask_self_train,
+        chain_encoding_all_train,
+    ), (
+        X_valid,
+        S_valid,
+        mask_valid,
+        lengths_valid,
+        chain_M_valid,
+        residue_idx_valid,
+        mask_self_valid,
+        chain_encoding_all_valid,
+    )
 
 
 def loss_nll(S, log_probs, mask):
@@ -431,7 +647,6 @@ class ProteinFeatures(nn.Module):
         return D_neighbors, E_idx
 
     def _rbf(self, D):
-        # Gaussian kernel
         device = D.device
         D_min, D_max, D_count = 2.0, 22.0, self.num_rbf
         D_mu = torch.linspace(D_min, D_max, D_count, device=device)
@@ -452,7 +667,6 @@ class ProteinFeatures(nn.Module):
         return RBF_A_B
 
     def forward(self, X, mask, residue_idx, chain_labels):
-        # Get Gaussian radial basis functions (RBFs)
         if self.training and self.augment_eps > 0:
             X = X + self.augment_eps * torch.randn_like(X)
 
@@ -610,36 +824,6 @@ class ProteinMPNN(nn.Module):
         logits = self.W_out(h_V)
         log_probs = F.log_softmax(logits, dim=-1)
         return log_probs
-
-
-class ProteinMPNN_FixedRFP(nn.Module):
-    def __init__(
-        self,
-        num_letters=21,
-        hidden_dim=128,
-        dropout=0.1,
-        scale=30
-    ):
-        super(ProteinMPNN_FixedRFP, self).__init__()
-        self.scale = scale
-
-        """ Simple MLP for RFP de novo design """
-        self.W_in = nn.Linear(num_letters, hidden_dim, bias=True)
-        self.W_out = nn.Linear(hidden_dim, num_letters, bias=True)
-
-        self.dropout1 = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(hidden_dim)
-        self.act = torch.nn.GELU()
-
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-
-    def forward(self, log_probs):
-        logits = self.W_out(self.norm1(self.dropout1(self.act(self.W_in(log_probs)))))
-        final_log_probs = F.log_softmax(logits, dim=-1)
-        
-        return final_log_probs
 
 
 class NoamOpt:
