@@ -1,7 +1,7 @@
 import pathlib
 
-DESIGN_RESULT = "./vanila_model/mRFP_SWISS_MODEL.fa"
-TARGET_DIR = "./vanila_model/separated"
+DESIGN_RESULT = "/mnt/P41/Repositories/ProteinMPNN/AI_project/vanila_model/mRFP_SWISS_MODEL_vanila_design+targeted_sequence_design.fa"
+TARGET_DIR = pathlib.Path(DESIGN_RESULT).parent / "separated"
 
 
 if __name__ == "__main__":
@@ -18,6 +18,6 @@ if __name__ == "__main__":
 
         with open(f"{pathlib.Path(TARGET_DIR) / id}.fa", "wt") as fa:
             fa.write(lines[i])
-            fa.write(lines[i+1])
+            fa.write(lines[i + 1])
 
     print("Done")

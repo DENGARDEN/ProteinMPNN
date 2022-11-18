@@ -5,8 +5,8 @@ import json
 import shutil
 
 
-TARGET_SEARCH_DIR = "/home/dengarden/Documents/AI_project/vanila_model/AlphaFold_prediction/deprecated/on_10"
-OUTPUT_DIR = "/mnt/P41/Repositories/ProteinMPNN/AI_project/plddt_analysis_target/"
+TARGET_SEARCH_DIR = "/mnt/P41/Repositories/ProteinMPNN/AI_project/whole_network_model/AlphaFold/full_sequence_design_model/"
+OUTPUT_DIR = "/mnt/P41/Repositories/ProteinMPNN/AI_project/whole_network_model/AlphaFold/full_sequence_design_model/plddt/"
 # JSON listing
 # Search recursively
 for filename in sorted(
