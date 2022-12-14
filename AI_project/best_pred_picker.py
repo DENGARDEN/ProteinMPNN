@@ -4,14 +4,18 @@ import pathlib
 import json
 import shutil
 
-
-TARGET_SEARCH_DIR = "/mnt/P41/Repositories/ProteinMPNN/AI_project/whole_network_model/AlphaFold/full_sequence_design_model/"
-OUTPUT_DIR = "/mnt/P41/Repositories/ProteinMPNN/AI_project/whole_network_model/AlphaFold/full_sequence_design_model/plddt/"
+MODE = "full"
+TARGET_SEARCH_DIR = (
+    f"/mnt/P41/Repositories/ProteinMPNN/AI_project/vanila_model/AlphaFold/{MODE}/"
+)
+OUTPUT_DIR = (
+    f"/mnt/P41/Repositories/ProteinMPNN/AI_project/vanila_model/AlphaFold/{MODE}/plddt/"
+)
 # JSON listing
 # Search recursively
-for filename in sorted(
-    glob.iglob(f"{TARGET_SEARCH_DIR}/**/ranking_debug.json", recursive=True)
-):
+
+pathlib.Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+for filename in sorted(pathlib.Path(TARGET_SEARCH_DIR).rglob("ranking_debug.json")):
     p = os.path.abspath(filename)
 
     # DEBUG

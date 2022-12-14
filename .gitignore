@@ -138,10 +138,12 @@ dmypy.json
 *.hhr
 *.zip
 
-# *.fa
+*.fa
 *.fasta
 *.pt
 *.gz
 *.ent
 *.csv
 *.bak
+*.png
+*.txt
