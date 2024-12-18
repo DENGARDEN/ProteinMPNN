@@ -84,7 +84,7 @@ def main(args, tb):
         "num_workers": 4,
     }
 
-    if args.fixed_network_transfer_learning == "True":
+    if args.fixed_network_transfer_learning:
         args.fixed_network_transfer_learning = True
     else:
         args.fixed_network_transfer_learning = False
@@ -130,6 +130,7 @@ def main(args, tb):
             hidden_dim=args.hidden_dim,
             dropout=args.dropout,
         )
+        model_final_classifier.to(device)
 
     if PATH:
         # Transfer learning from a previous checkpoint
@@ -147,6 +148,15 @@ def main(args, tb):
         if args.fixed_network_transfer_learning:
             for param in model.parameters():
                 param.requires_grad = False
+        elif args.train_only_last_layer:
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            # enable grad for the last layer + last decoder FF layer
+            for param in model.W_out.parameters():
+                param.requires_grad = True
+            for param in model.decoder_layers[-1].dense.W_out.parameters():
+                param.requires_grad = True
 
         trasnfer_epoch = 0
     else:
@@ -155,7 +165,7 @@ def main(args, tb):
 
     if args.fixed_network_transfer_learning:
         optimizer = get_std_opt(
-            model_final_classifier.parameters, args.hidden_dim, total_step
+            model_final_classifier.parameters(), args.hidden_dim, total_step
         )
     else:
         optimizer = get_std_opt(model.parameters(), args.hidden_dim, total_step)
@@ -404,38 +414,51 @@ def main(args, tb):
 
             # VISUALIZATION OF THE IMPORTATNT TRAINABLE VARIABLES
             if args.fixed_network_transfer_learning:
-                
+
                 tb.add_histogram(
                     "final_log_prob_out.weight",
                     model_final_classifier.W_out.weight,
-                    epoch,
+                    e + 1,
                 )
                 tb.add_histogram(
-                    "final_log_prob_out.bias", model_final_classifier.W_out.bias, epoch
+                    "final_log_prob_out.bias", model_final_classifier.W_out.bias, e + 1
                 )
-
+            elif args.train_only_last_layer:
+                # Dec
+                tb.add_histogram(
+                    "last_dec_positionalFF_out.weight",
+                    model.decoder_layers[-1].dense.W_out.weight,
+                    e + 1,
+                )
+                tb.add_histogram(
+                    "last_dec_positionalFF_out.bias",
+                    model.decoder_layers[-1].dense.W_out.bias,
+                    e + 1,
+                )
+                tb.add_histogram("final_log_prob_out.weight", model.W_out.weight, e + 1)
+                tb.add_histogram("final_log_prob_out.bias", model.W_out.bias, e + 1)
             else:
                 # Enc
                 tb.add_histogram(
                     "last_enc_positionalFF_out.weight",
                     model.encoder_layers[-1].dense.W_out.weight,
-                    epoch,
+                    e + 1,
                 )
                 tb.add_histogram(
                     "last_enc_positionalFF_out.bias",
                     model.encoder_layers[-1].dense.W_out.bias,
-                    epoch,
+                    e + 1,
                 )
                 # Dec
                 tb.add_histogram(
                     "last_dec_positionalFF_out.weight",
                     model.decoder_layers[-1].dense.W_out.weight,
-                    epoch,
+                    e + 1,
                 )
                 tb.add_histogram(
                     "last_dec_positionalFF_out.bias",
                     model.decoder_layers[-1].dense.W_out.bias,
-                    epoch,
+                    e + 1,
                 )
 
         # train and validation visualization
@@ -536,14 +559,20 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--mixed_precision", type=bool, default=True, help="train with mixed precision"
     )
-    # argparser.add_argument(
-    #     "--num_cross_validation", type=int, default=5, help="Monte Carlo CV counts"
-    # ) # for every epoch
+    argparser.add_argument(
+        "--whole_network_transfer_learning",
+        action="store_true",
+        help="train with fixed network weights",
+    )
     argparser.add_argument(
         "--fixed_network_transfer_learning",
-        type=bool,
-        default=False,
+        action="store_true",
         help="train with fixed network weights",
+    )
+    argparser.add_argument(
+        "--train_only_last_layer",
+        action="store_true",
+        help="frozen network, but training only the last (FCN-softmax) layer",
     )
 
     args = argparser.parse_args()

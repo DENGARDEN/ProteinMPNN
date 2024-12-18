@@ -145,3 +145,5 @@ dmypy.json
 *.ent
 *.csv
 *.bak
+*.png
+*.txt
